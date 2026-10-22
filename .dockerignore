@@ -1,0 +1,4 @@
+# Only the agent image builds from the repository root; send it nothing else.
+*
+!agent/
+!examples/03-kubernetes/agent-image/

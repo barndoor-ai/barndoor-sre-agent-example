@@ -1,0 +1,31 @@
+# Local symlink to the internal platform repo; never commit it.
+bdai-platform
+
+# Secrets and per-user config
+.env
+*.tfvars
+!*.tfvars.example
+
+# Runtime state written by the example scripts
+.bobi/
+.claude-sre/
+.state/
+incidents/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Tilt / editors
+.tilt-dev/
+.idea/
+.vscode/
+.DS_Store

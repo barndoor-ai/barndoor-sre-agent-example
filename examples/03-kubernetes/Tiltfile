@@ -1,0 +1,89 @@
+# Example 3: the whole stack in a local kind cluster, driven by Tilt.
+#
+#   ./cluster-up.sh     create the kind cluster (once)
+#   tilt up             build images, deploy, port-forward, stream logs
+#   ./apply.sh          Terraform: Grafana alerting + Barndoor servers/policies
+#
+# Settings come from the repository's .env plus the tokens scripts/lib.sh
+# generates, the same values the other examples use.
+
+allow_k8s_contexts('kind-sre-example')
+update_settings(k8s_upsert_timeout_secs=180)
+
+REPO = '../..'
+
+env = decode_json(local(
+    [REPO + '/scripts/print-env-json.sh',
+     'BARNDOOR_CLIENT_ID', 'BARNDOOR_CLIENT_SECRET', 'BARNDOOR_ENV',
+     'LLM_GATEWAY_URL', 'LLM_MODEL', 'ANTHROPIC_AUTH_TOKEN',
+     'BRAIN_KIND', 'BOBI_STUB_BRAIN',
+     'BOBI_INGEST_TOKEN', 'BOBI_ES_INGEST_TOKENS', 'BRIDGE_TOKEN', 'GRAFANA_ADMIN_PASSWORD'],
+    quiet=True, echo_off=True))
+
+stub = env['BRAIN_KIND'] == 'stub'
+if not stub:
+    missing = [k for k in ['BARNDOOR_CLIENT_ID', 'BARNDOOR_CLIENT_SECRET', 'LLM_MODEL', 'ANTHROPIC_AUTH_TOKEN'] if not env[k]]
+    if missing:
+        fail('missing settings in .env: %s (or export BRAIN_KIND=stub BOBI_STUB_BRAIN=1 for a wiring-only run)' % ', '.join(missing))
+
+def secret(name, data):
+    return encode_yaml({
+        'apiVersion': 'v1',
+        'kind': 'Secret',
+        'metadata': {'name': name, 'namespace': 'sre-demo'},
+        'type': 'Opaque',
+        'stringData': data,
+    })
+
+k8s_yaml('k8s/app.yaml')  # creates the namespace first
+k8s_yaml(secret('sre-agent', {
+    'BARNDOOR_CLIENT_ID': env['BARNDOOR_CLIENT_ID'] or 'stub',
+    'BARNDOOR_CLIENT_SECRET': env['BARNDOOR_CLIENT_SECRET'] or 'stub',
+    'BARNDOOR_ENV': env['BARNDOOR_ENV'] or 'prod',
+    'LLM_GATEWAY_URL': env['LLM_GATEWAY_URL'],
+    'LLM_MODEL': env['LLM_MODEL'] or 'stub',
+    'ANTHROPIC_AUTH_TOKEN': env['ANTHROPIC_AUTH_TOKEN'],
+    'BRAIN_KIND': env['BRAIN_KIND'] or 'claude',
+    'BOBI_STUB_BRAIN': env['BOBI_STUB_BRAIN'],
+    'BOBI_ES_INGEST_TOKENS': env['BOBI_ES_INGEST_TOKENS'],
+}))
+k8s_yaml(secret('sandbox-secrets', {
+    'BOBI_INGEST_TOKEN': env['BOBI_INGEST_TOKEN'],
+    'BRIDGE_TOKEN': env['BRIDGE_TOKEN'],
+    'GRAFANA_ADMIN_PASSWORD': env['GRAFANA_ADMIN_PASSWORD'],
+}))
+k8s_yaml(encode_yaml({
+    'apiVersion': 'v1',
+    'kind': 'ConfigMap',
+    'metadata': {'name': 'bridge-code', 'namespace': 'sre-demo'},
+    'data': {'bridge.py': str(read_file(REPO + '/bridge/bridge.py'))},
+}))
+k8s_yaml(['k8s/prometheus.yaml', 'k8s/grafana.yaml', 'k8s/bridge.yaml', 'k8s/sre-agent.yaml'])
+
+docker_build('sre-example/app', REPO + '/app')
+docker_build(
+    'sre-example/sre-agent',
+    REPO,
+    dockerfile='agent-image/Dockerfile',
+    only=['agent', 'examples/03-kubernetes/agent-image'],
+)
+
+k8s_resource('flux-capacitor', port_forwards='8000:8000', labels=['app'])
+k8s_resource('prometheus', port_forwards='9090:9090', labels=['observability'])
+k8s_resource('grafana', port_forwards='3000:3000', labels=['observability'])
+k8s_resource('tunnel', labels=['observability'], resource_deps=['grafana'])
+k8s_resource('bridge', labels=['alerting'], resource_deps=['sre-agent'])
+k8s_resource('sre-agent', labels=['agent'], objects=[
+    'sre-agent:serviceaccount',
+    'sre-agent-readonly:clusterrole',
+    'sre-agent-readonly:clusterrolebinding',
+    'sre-agent-data:persistentvolumeclaim',
+    'sre-agent:secret',
+])
+
+local_resource(
+    'grafana-public-url',
+    cmd='kubectl -n sre-demo logs deploy/tunnel 2>&1 | grep -oE "https://[a-z0-9-]+\\.trycloudflare\\.com" | tail -1',
+    resource_deps=['tunnel'],
+    labels=['observability'],
+)

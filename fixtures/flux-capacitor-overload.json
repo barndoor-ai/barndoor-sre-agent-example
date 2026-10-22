@@ -1,0 +1,20 @@
+{
+  "incident_id": "FIXTURE-FluxCapacitorOverload",
+  "title": "FluxCapacitorOverload",
+  "alertname": "FluxCapacitorOverload",
+  "severity": "warning",
+  "summary": "Flux capacitor output is above the 1.21 GW safety limit",
+  "description": "max(flux_capacitor_gigawatts) > 1.21 for 30s",
+  "value": 2.4,
+  "threshold": 1.21,
+  "state": "firing",
+  "service": "flux-capacitor",
+  "container": "sre-example-app",
+  "environment": "local",
+  "namespace": "docker-compose",
+  "started_at": "",
+  "permalink": "http://localhost:8000/chaos",
+  "dashboard_uid": "",
+  "kube_context": "",
+  "source": "fixture"
+}

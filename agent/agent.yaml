@@ -1,0 +1,95 @@
+version: "0.1.0"
+
+# Barndoor SRE example agent: a bobi agent team with two roles.
+#   director  the single human-facing voice (ack, findings notes, verdict)
+#   sre       the investigator (read-only tool calls through Barndoor)
+# The manager persona is the director.
+entry_point: director
+
+# Triage runs that may execute at once. Each run holds one Claude Code
+# session, so this is also the memory/cost ceiling.
+max_concurrent_agents: 2
+
+# Empty means bobi starts its embedded local event server (port 8080).
+# Alerts arrive on it through the token-authenticated ingest webhook:
+#   POST /webhooks/ingest/alert/firing
+event_server: ${BOBI_EVENT_SERVER:-}
+
+# The brain is Claude Code, pointed at the Barndoor LLM gateway.
+#  - base_url has NO trailing /v1: Claude Code appends /v1/messages itself.
+#  - Auth is a Barndoor gateway key (bd-...) in ANTHROPIC_AUTH_TOKEN. In
+#    gateway mode bobi blanks any ambient ANTHROPIC_API_KEY so a real
+#    Anthropic key can never leak to the gateway.
+#  - The model is a name from the gateway's Available Models: a route such
+#    as "sre-agent" (scripts/setup-llm-gateway.sh creates it) or a
+#    provider-prefixed model. small_model is pinned to the same name so Claude
+#    Code's background calls never request a model the gateway does not serve.
+#  - BRAIN_KIND=stub (with BOBI_STUB_BRAIN=1) swaps in bobi's scripted test
+#    brain to check event -> dispatch wiring without spending tokens.
+brain:
+  kind: ${BRAIN_KIND:-claude}
+  model: ${LLM_MODEL}
+  base_url: ${LLM_GATEWAY_URL:-https://app.barndoor.ai/api/llm-gateway}
+  small_model: ${LLM_MODEL}
+
+subscribe:
+  - alert/firing
+
+# bobi seeds a 6-hourly "sleep-cycle" monitor that distills transcripts into
+# long-term memory with an LLM call. Drop it so this demo only spends gateway
+# tokens on real alerts.
+prune:
+  monitors: [sleep-cycle]
+
+# Every firing alert launches the triage workflow deterministically, before
+# the manager LLM is involved. Only TOP-LEVEL primitive fields of the alert
+# payload become ${{input.*}}; alert sources must send a flat object.
+#
+# The task text is CONTEXT, not an instruction. bobi runs the task as a
+# standalone prompt before step 1, so an imperative "triage this alert" would
+# make the model do the whole job outside the workflow and then have step 1
+# find its own notes. Keep the alert name first: session titles use the
+# first 80 characters.
+auto_dispatch:
+  - event: alert/firing
+    workflow: triage
+    cooldown: 300
+    role: ""
+    task: >-
+      Alert ${{input.title}} (severity ${{input.severity}}, service
+      ${{input.service}}, environment ${{input.environment}}, namespace
+      ${{input.namespace}}, incident ${{input.incident_id}}).
+      Summary: ${{input.summary}}
+      —— CONTEXT ONLY: this message is the alert record, not a work order.
+      Do NOT investigate, post, or call any tool in response to it. Reply with
+      one line naming the alert to confirm receipt, then STOP and wait for the
+      triage workflow's steps.
+
+requires:
+  - name: barndoor
+    why: "Every investigation tool call goes through the policy-enforced Barndoor MCP gateway."
+    check: "test -x \"${BARNDOOR_BIN:-/usr/local/bin/barndoor}\""
+    fix: "install the Barndoor CLI (see docs/barndoor-trial-setup.md) and export BARNDOOR_BIN=$(command -v barndoor)"
+  - name: sre-note
+    why: "The director records the incident timeline with sre-note."
+    check: "command -v sre-note >/dev/null 2>&1"
+    fix: "put agent/bin on PATH (the example scripts do this for you)"
+
+tool_library:
+  - name: barndoor
+    why: "Docker, Grafana and Kubernetes tools via the Barndoor MCP gateway, governed by policy."
+    success: "test -x \"${BARNDOOR_BIN:-/usr/local/bin/barndoor}\""
+    mcp:
+      barndoor:
+        type: stdio
+        # Absolute path: bobi's MCP preflight runs without your shell PATH.
+        command: ${BARNDOOR_BIN:-/usr/local/bin/barndoor}
+        args:
+          - "--stdio"
+          - "--env"
+          - "${BARNDOOR_ENV:-prod}"
+        # The agent's machine-to-machine credentials ride the env block,
+        # never argv, so they do not show up in process listings.
+        env:
+          BARNDOOR_CLIENT_ID: ${BARNDOOR_CLIENT_ID}
+          BARNDOOR_CLIENT_SECRET: ${BARNDOOR_CLIENT_SECRET}

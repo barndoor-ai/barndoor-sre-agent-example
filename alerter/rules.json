@@ -1,0 +1,43 @@
+{
+  "rules": [
+    {
+      "name": "FluxCapacitorOverload",
+      "kind": "gauge",
+      "metric": "flux_capacitor_gigawatts",
+      "threshold": 1.21,
+      "for_seconds": 30,
+      "severity": "warning",
+      "summary": "Flux capacitor output is above the 1.21 GW safety limit",
+      "description": "max(flux_capacitor_gigawatts) > 1.21 for 30s"
+    },
+    {
+      "name": "HighErrorRate",
+      "kind": "error_ratio",
+      "window_seconds": 60,
+      "threshold": 0.05,
+      "for_seconds": 30,
+      "severity": "critical",
+      "summary": "More than 5% of requests are failing with HTTP 5xx",
+      "description": "rate(http_requests_total{status=~\"5..\"}[1m]) / rate(http_requests_total[1m]) > 0.05 for 30s"
+    },
+    {
+      "name": "HighLatency",
+      "kind": "avg_latency",
+      "window_seconds": 60,
+      "threshold": 0.5,
+      "for_seconds": 30,
+      "severity": "warning",
+      "summary": "Average request latency is above 500ms",
+      "description": "rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m]) > 0.5 for 30s"
+    },
+    {
+      "name": "FluxCapacitorDown",
+      "kind": "target_down",
+      "threshold": 0.5,
+      "for_seconds": 20,
+      "severity": "critical",
+      "summary": "The flux capacitor /metrics endpoint is not answering",
+      "description": "scrape of the app's /metrics endpoint has failed for 20s"
+    }
+  ]
+}

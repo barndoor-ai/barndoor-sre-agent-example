@@ -1,0 +1,137 @@
+name: triage
+trigger: A monitored alert is firing and needs investigation.
+description: >
+  Tier-1 triage of a firing alert. The director acknowledges it in the
+  incident record, the sre role investigates (metrics first, then workload
+  state and logs), findings are written to the record as they land, and the
+  director closes with an evidence-cited four-line verdict and an explicit
+  escalation call. Investigation and recommendation only; no remediation.
+
+steps:
+  - name: ack
+    agent: director
+    prompt: |
+      Open the incident record for this alert. Details are in your task and
+      ${{input.*}}:
+
+        sre-note --incident "${{input.incident_id}}" "🔎 ACK — investigating ${{input.title}} (${{input.severity}}, ${{input.environment}}/${{input.namespace}}, service ${{input.service}}). ${{input.summary}}. Condition: ${{input.description}}. Value ${{input.value}} vs threshold ${{input.threshold}}. Permalink: ${{input.permalink}}"
+
+      Do not investigate. Hand off once the command has run; if it failed,
+      say so (acked=false) and continue.
+    handoff:
+      required: [acked]
+    timeout: 300
+
+  - name: investigate
+    agent: sre
+    prompt: |
+      Investigate the alert per your Investigation strategy, steps 1-4.
+      Start with `list_servers` to see which of sre-grafana, sre-docker and
+      sre-kubernetes are connected. Use metrics first when Grafana is
+      present, then the service's container or pod state and recent logs
+      around ${{input.started_at}}. Target: service ${{input.service}},
+      container ${{input.container}}, namespace ${{input.namespace}}.
+
+      Handoff:
+      - `finding`: evidence-cited summary (what fired, since when, how bad,
+        and what the logs say), naming the tool calls it rests on;
+      - `root_cause_confident`: true only if the evidence pins the cause;
+      - `servers`: the sre-* servers that were connected;
+      - `gaps`: what you could not check, including any policy denials.
+    handoff:
+      required: [finding, root_cause_confident]
+      optional: [servers, gaps]
+    timeout: 1200
+
+  - name: post_findings
+    agent: director
+    prompt: |
+      Record the investigator's findings on the incident:
+
+        sre-note --incident "${{input.incident_id}}" "📊 Findings — <evidence-citing bullets>"
+
+      Digest the `investigate` handoff; include its gaps. A non-zero exit
+      means the note did not land: say so in your handoff and continue.
+    handoff:
+      required: [posted]
+    timeout: 300
+
+  - name: route_after_investigate
+    if: "root_cause_confident == true"
+    goto: synthesize
+    else: deep_dive
+
+  - name: deep_dive
+    agent: sre
+    prompt: |
+      The first pass did not pin the root cause (see the `investigate`
+      handoff, especially `gaps`). Fill the gaps with workload detail: full
+      container or pod inspection (state, exit codes, restart counts,
+      health), a wider log window, and any metric the first pass skipped.
+      Same rules: read-only, at most three more rounds of tool calls.
+
+      Handoff: `finding` (evidence-cited), `gaps` (anything still unknown).
+    handoff:
+      required: [finding]
+      optional: [gaps]
+    timeout: 1200
+
+  - name: post_deep_dive
+    agent: director
+    prompt: |
+      Record the deep-dive evidence:
+
+        sre-note --incident "${{input.incident_id}}" "🔬 Deep dive — <evidence-citing bullets>"
+
+      A non-zero exit means the note did not land: say so and continue.
+    handoff:
+      required: [posted]
+    timeout: 300
+
+  - name: synthesize
+    agent: sre
+    prompt: |
+      Produce the final triage from all prior findings: the root cause (or
+      the best-supported hypothesis, labelled as such, with its gaps), the
+      evidence chain, a severity assessment, and the recommended next action
+      for a human. Do NOT remediate.
+
+      Name only causes the evidence supports. A log line saying a fault was
+      enabled, timed just before the metric moved, is strong evidence. A
+      symptom alone is not.
+
+      Handoff: `root_cause`, `evidence` (citation list), `escalate`
+      (true/false per the escalation criteria), `severity`,
+      `recommendation`.
+    handoff:
+      required: [root_cause, evidence, escalate]
+      optional: [severity, recommendation]
+    timeout: 900
+
+  - name: conclude
+    agent: director
+    prompt: |
+      Close the investigation. Write the verdict to the incident record,
+      leading with the four-line skeleton from your role prompt (🚨 when
+      escalating, ✅ otherwise), followed by the evidence chain:
+
+        sre-note --incident "${{input.incident_id}}" "<four-line verdict>
+
+        Evidence:
+        - ..."
+
+      If any earlier note failed to land, add a line saying "⚠️ some
+      evidence reached only the agent transcript".
+
+      Then, if `sre-grafana` was among the connected servers (see the
+      `investigate` handoff), post the four-line verdict as a Grafana
+      annotation per your role prompt, using dashboardUID
+      "${{input.dashboard_uid}}" only if that value is non-empty. Report the
+      annotation outcome in the incident record in one line.
+
+      Apply your own judgment per the escalation criteria if the
+      `synthesize` fields conflict.
+    handoff:
+      required: [posted, escalate]
+      optional: [annotated]
+    timeout: 300

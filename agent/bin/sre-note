@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""sre-note: append a timestamped note to an incident's markdown record.
+
+    sre-note --incident <incident_id> "<text>"
+    sre-note --incident <incident_id> --show
+
+Records live in $SRE_INCIDENT_DIR (default: ./incidents), one file per
+incident. This is the example's stand-in for an incident-management system
+(production writes Grafana OnCall resolution notes instead).
+
+Exit status is non-zero when the note did not land, so the caller can report
+the failure instead of assuming success.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+MAX_NOTE_CHARS = 8000
+
+
+def incident_path(incident_id: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", incident_id).strip("-") or "unknown"
+    return Path(os.environ.get("SRE_INCIDENT_DIR", "incidents")).expanduser() / f"{safe}.md"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="sre-note", description=__doc__.splitlines()[0])
+    parser.add_argument("--incident", required=True, help="incident id from the alert (input.incident_id)")
+    parser.add_argument("--show", action="store_true", help="print the incident record instead of writing")
+    parser.add_argument("text", nargs="?", help="the note to append")
+    args = parser.parse_args()
+
+    path = incident_path(args.incident)
+    if args.show:
+        if not path.exists():
+            print(f"no record for incident {args.incident}", file=sys.stderr)
+            return 1
+        print(path.read_text())
+        return 0
+
+    if not args.text or not args.text.strip():
+        print("sre-note: refusing to write an empty note", file=sys.stderr)
+        return 2
+
+    text = args.text.strip()
+    if len(text) > MAX_NOTE_CHARS:
+        text = text[:MAX_NOTE_CHARS] + "\n…(truncated)"
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        is_new = not path.exists()
+        with path.open("a", encoding="utf-8") as record:
+            if is_new:
+                record.write(f"# Incident {args.incident}\n")
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+            record.write(f"\n## {stamp}\n\n{text}\n")
+    except OSError as e:
+        print(f"sre-note: could not write {path}: {e}", file=sys.stderr)
+        return 1
+
+    print(f"noted on incident {args.incident}: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

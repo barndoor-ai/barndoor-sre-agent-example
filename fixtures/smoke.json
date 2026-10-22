@@ -1,0 +1,20 @@
+{
+  "incident_id": "FIXTURE-Smoke",
+  "title": "SmokeTest",
+  "alertname": "SmokeTest",
+  "severity": "info",
+  "summary": "[SMOKE TEST - not a real incident] Verify the agent's Barndoor tooling end to end: call list_servers, then one read-only call on each connected sre-* server (for example sre-docker list_containers). Report per-server OK or FAIL and stop; do not remediate.",
+  "description": "synthetic smoke test",
+  "value": 0,
+  "threshold": 0,
+  "state": "firing",
+  "service": "flux-capacitor",
+  "container": "sre-example-app",
+  "environment": "local",
+  "namespace": "docker-compose",
+  "started_at": "",
+  "permalink": "http://localhost:8000/chaos",
+  "dashboard_uid": "",
+  "kube_context": "",
+  "source": "fixture"
+}
