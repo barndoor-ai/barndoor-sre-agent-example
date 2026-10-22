@@ -1,0 +1,111 @@
+# The SRE agent, shaped like Barndoor's production deployment
+# (barndoor-infra gitops/manifests/infra/sre-agent-bobi): one replica,
+# Recreate strategy (two managers must never share one state volume), and a
+# persistent volume for bobi state, Claude Code config and incident records.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sre-agent
+  namespace: sre-demo
+---
+# Read-only, like production's sre-agent-readonly ClusterRole. Barndoor policy
+# already limits the agent to read tools; RBAC makes the cluster refuse
+# writes too, so a policy mistake cannot become a cluster change.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sre-agent-readonly
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, endpoints, events, namespaces, nodes, configmaps, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods, nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sre-agent-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sre-agent-readonly
+subjects:
+  - kind: ServiceAccount
+    name: sre-agent
+    namespace: sre-demo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sre-agent-data
+  namespace: sre-demo
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent
+  namespace: sre-demo
+  labels: {app: sre-agent}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: sre-agent}
+  template:
+    metadata:
+      labels: {app: sre-agent}
+    spec:
+      serviceAccountName: sre-agent
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: sre-agent
+          image: sre-example/sre-agent
+          ports:
+            - {name: events, containerPort: 8080}
+          env:
+            - {name: KUBE_CONTEXT, value: sre-sandbox}
+          envFrom:
+            - secretRef: {name: sre-agent}
+          readinessProbe:
+            tcpSocket: {port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+            limits: {memory: 3Gi}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: sre-agent-data}
+---
+# The bridge posts alerts to the agent's embedded event server here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sre-agent
+  namespace: sre-demo
+spec:
+  selector: {app: sre-agent}
+  ports:
+    - {name: events, port: 8080, targetPort: 8080}

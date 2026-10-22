@@ -1,0 +1,39 @@
+# Example 1: the sample app plus a Grafana-free alerter. The SRE agent itself
+# runs on your host (scripts/agent-up.sh); the alerter reaches its event
+# server through host.docker.internal.
+#
+# Start with ./up.sh rather than `docker compose up`: it exports the ingest
+# token and event-server port this file interpolates.
+name: sre-example-local-queue
+
+services:
+  app:
+    build: ../../app
+    container_name: sre-example-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_NAME: flux-capacitor
+      LOAD_RPS: "5"
+
+  alerter:
+    image: python:3.12-slim
+    container_name: sre-example-alerter
+    restart: unless-stopped
+    depends_on:
+      - app
+    command: ["python", "-u", "/alerter/alerter.py"]
+    volumes:
+      - ../../alerter:/alerter:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      APP_METRICS_URL: http://app:8000/metrics
+      BOBI_INGEST_URL: http://host.docker.internal:${SRE_EVENT_PORT:-8080}/webhooks/ingest/alert/firing
+      BOBI_INGEST_TOKEN: ${BOBI_INGEST_TOKEN:?run ./up.sh, which sets the ingest token}
+      ALERT_ENVIRONMENT: local
+      ALERT_NAMESPACE: docker-compose
+      ALERT_SERVICE: flux-capacitor
+      ALERT_CONTAINER: sre-example-app
+      ALERT_PERMALINK: http://localhost:8000/chaos
