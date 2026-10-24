@@ -1,7 +1,7 @@
 # The SRE agent as a container: bobi + Claude Code + the barndoor CLI + the
 # agent package. Built from the repository root (see the Tiltfile):
 #   docker build -f examples/03-kubernetes/agent-image/Dockerfile .
-FROM node:20-bookworm-slim AS node
+FROM node:24.22.1-bookworm-slim AS node
 
 FROM python:3.12-slim-bookworm
 

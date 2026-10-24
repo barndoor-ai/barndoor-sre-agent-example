@@ -58,7 +58,7 @@ Both examples use the container name `sre-example-app` and port 8000.
 | Python 3.11 or newer | bobi and the helper scripts | `brew install python` |
 | uv | installs bobi | `brew install uv` |
 | bobi 0.58.0 | the agent runtime | `uv tool install 'bobi==0.58.0'` |
-| Node.js 20 or newer | bobi's local event server | `brew install node` |
+| Node.js 24 or newer | bobi's local event server | `brew install node` |
 | Claude Code | the agent's brain | `npm install -g @anthropic-ai/claude-code` |
 | Docker | runs the app, Prometheus, Grafana, bridge, tunnel | Docker Desktop, Rancher Desktop or OrbStack |
 | Terraform 1.6 or newer | configures Grafana and Barndoor | `brew install terraform` |
