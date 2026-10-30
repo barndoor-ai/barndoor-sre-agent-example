@@ -12,7 +12,7 @@ set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
-fixture="${1:?usage: fire-alert.sh <fixture-name|path>  (fixtures: $(ls "$REPO_ROOT/fixtures" | sed 's/\.json$//' | tr '\n' ' '))}"
+fixture="${1:?usage: fire-alert.sh <fixture-name|path>  (fixtures: $(cd "$REPO_ROOT/fixtures" && printf '%s ' *.json | sed 's/\.json//g'))}"
 if [ -f "$fixture" ]; then
   payload_file="$fixture"
 elif [ -f "$REPO_ROOT/fixtures/$fixture.json" ]; then

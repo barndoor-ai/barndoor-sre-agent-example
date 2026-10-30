@@ -1,0 +1,18 @@
+# Relaxed yamllint config: syntax and structure matter here, prose style does not.
+extends: default
+
+rules:
+  # Prose comments and long prompt strings are normal in agent.yaml/workflows.
+  line-length: disable
+  # Comments are written as sentences in the files' own voice.
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  # Compose files and k8s manifests omit the leading "---".
+  document-start: disable
+  # "on:" in GitHub workflows and similar keys are not booleans to us.
+  truthy:
+    check-keys: false
+  indentation:
+    spaces: consistent
+    indent-sequences: consistent

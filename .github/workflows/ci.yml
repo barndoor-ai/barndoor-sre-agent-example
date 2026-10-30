@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        # Every tracked shell script. -x follows the `. lib.sh` sources.
+        run: git ls-files '*.sh' | xargs shellcheck -x --source-path=SCRIPTDIR
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.7
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate
+        # Provider versions float within their `~>` constraints (no lock file
+        # is committed), so a new provider release can turn this red with no
+        # code change. Accepted on purpose: users resolve the same versions, so
+        # this is an early warning for them too.
+        # Providers come from the public registry; no credentials are needed
+        # for init -backend=false or validate. Modules are validated through
+        # the roots that call them.
+        run: |
+          set -euo pipefail
+          for root in terraform/llm-gateway examples/*/terraform; do
+            echo "::group::$root"
+            terraform -chdir="$root" init -backend=false -input=false
+            terraform -chdir="$root" validate
+            echo "::endgroup::"
+          done
+
+      - name: Python syntax
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+        # compileall skips extensionless files; agent/bin/sre-note is covered
+        # by the ruff step below.
+        run: python3 -m compileall -q app alerter bridge scripts
+
+      - name: ruff
+        run: pipx run ruff==0.15.0 check app alerter bridge scripts/*.py agent/bin/sre-note
+
+      - name: yamllint
+        run: pipx run yamllint==1.38.0 -c .yamllint.yaml --strict agent examples .github .yamllint.yaml
+
+      - name: JSON validity
+        run: |
+          set -euo pipefail
+          for f in fixtures/*.json alerter/rules.json terraform/modules/grafana-sre/dashboard.json; do
+            python3 -m json.tool "$f" > /dev/null
+            echo "ok $f"
+          done
+
+      - name: docker compose config
+        # The compose files interpolate required secrets that ./up.sh generates
+        # at run time; placeholders are enough to validate the structure.
+        env:
+          BOBI_INGEST_TOKEN: placeholder
+          GRAFANA_ADMIN_PASSWORD: placeholder
+          BRIDGE_TOKEN: placeholder
+        run: |
+          set -euo pipefail
+          for f in examples/*/docker-compose.yaml; do
+            docker compose -f "$f" config -q
+            echo "ok $f"
+          done
+
+      - name: Build app image
+        run: docker build -t sre-example/app app
+
+      - name: Build agent image
+        # Same context the Tiltfile uses: the repository root.
+        run: docker build -f examples/03-kubernetes/agent-image/Dockerfile -t sre-example/sre-agent .
+
+  stub-e2e:
+    name: Stub-brain alert dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install bobi (version the agent image ships)
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^ARG BOBI_VERSION=//p' examples/03-kubernetes/agent-image/Dockerfile)"
+          [ -n "$version" ] || { echo "no BOBI_VERSION in the agent Dockerfile" >&2; exit 1; }
+          pipx install "bobi==$version"
+
+      - name: Fire the smoke alert and wait for the triage run
+        # Fails unless a triage workflow run exists for the fired alert.
+        run: scripts/stub-e2e.sh
