@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared environment for every example. Source it; do not execute it.
 #
 # Loads ./.env, then keeps all agent runtime state inside this repository so
@@ -35,6 +36,7 @@ export SRE_EVENT_PORT="${SRE_EVENT_PORT:-8080}"
 export BOBI_EVENT_SERVER="${BOBI_EVENT_SERVER:-http://localhost:$SRE_EVENT_PORT}"
 export BOBI_INGEST_URL="${BOBI_INGEST_URL:-$BOBI_EVENT_SERVER/webhooks/ingest/alert/firing}"
 
+# shellcheck disable=SC2034  # used by the scripts that source this file (agent-up.sh)
 RUN_ROOT="$BOBI_HOME/agents/$AGENT_NAME/run"
 
 # One ingest token per checkout, generated on first use. bobi's embedded
@@ -45,15 +47,26 @@ mkdir -p "$REPO_ROOT/.state"
 generated_secret() {
   local file="$REPO_ROOT/.state/$1" prefix="$2"
   if [ ! -s "$file" ]; then
-    PREFIX="$prefix" python3 -c 'import os, secrets; print(os.environ["PREFIX"] + secrets.token_hex(24))' > "$file"
+    # On failure, remove the (already created, empty) file and fail, so callers
+    # under `set -e` abort instead of exporting an empty secret.
+    if ! PREFIX="$prefix" python3 -c 'import os, secrets; print(os.environ["PREFIX"] + secrets.token_hex(24))' > "$file"; then
+      rm -f "$file"
+      return 1
+    fi
     chmod 600 "$file"
   fi
+  [ -s "$file" ] || return 1
   cat "$file"
 }
-export BOBI_INGEST_TOKEN="$(generated_secret ingest-token ingt_)"
+BOBI_INGEST_TOKEN="$(generated_secret ingest-token ingt_)"
+export BOBI_INGEST_TOKEN
 export BOBI_ES_INGEST_TOKENS="alert/firing=$BOBI_INGEST_TOKEN"
-export BRIDGE_TOKEN="$(generated_secret bridge-token brt_)"
-export GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-$(generated_secret grafana-admin-password "")}"
+BRIDGE_TOKEN="$(generated_secret bridge-token brt_)"
+export BRIDGE_TOKEN
+if [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+  GRAFANA_ADMIN_PASSWORD="$(generated_secret grafana-admin-password "")"
+fi
+export GRAFANA_ADMIN_PASSWORD
 
 # Alert sources running in Docker reach the host's event server through
 # host.docker.internal. Docker Desktop and Rancher Desktop route that to the
@@ -94,8 +107,8 @@ export_terraform_vars() {
 # The public hostname of a Cloudflare quick tunnel, read from its logs.
 # Usage: tunnel_host <command that prints the tunnel's logs>
 tunnel_host() {
-  local host="" attempt
-  for attempt in $(seq 1 30); do
+  local host=""
+  for _ in $(seq 1 30); do
     host="$("$@" 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 | sed 's#https://##')" || true
     [ -n "$host" ] && break
     sleep 2

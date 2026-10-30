@@ -100,7 +100,9 @@ def evaluate(rule: dict, samples: dict | None, history: History, now: float) -> 
         return None
     _, old = past
     if kind == "error_ratio":
-        is_5xx = lambda labels: labels.get("status", "").startswith("5")
+        def is_5xx(labels):
+            return labels.get("status", "").startswith("5")
+
         errors = total(samples, "http_requests_total", is_5xx) - total(old, "http_requests_total", is_5xx)
         requests = total(samples, "http_requests_total") - total(old, "http_requests_total")
         return errors / requests if requests > 0 else 0.0
