@@ -1,5 +1,4 @@
-# The SRE agent, shaped like Barndoor's production deployment
-# (barndoor-infra gitops/manifests/infra/sre-agent-bobi): one replica,
+# The SRE agent, shaped like Barndoor's production deployment: one replica,
 # Recreate strategy (two managers must never share one state volume), and a
 # persistent volume for bobi state, Claude Code config and incident records.
 apiVersion: v1
